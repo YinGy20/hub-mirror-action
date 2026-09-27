@@ -27,6 +27,6 @@ jobs:
           dst: gitee/dddsm122
           dst_key: ${{ secrets.GITEE_SSH_PRIVATE_KEY }}
           dst_token: ${{ secrets.GITEE_TOKEN }}
-          static_list: "awesome-math"
+          static_list: "awesome-copilot-agents"
           force_update: true
           timeout: 60m
