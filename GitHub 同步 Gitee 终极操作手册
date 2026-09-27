@@ -1,0 +1,170 @@
+这份《GitHub 同步 Gitee 终极操作手册》已经为你整理好了。我按照“从零开始”到“日常使用”的顺序，把所有细节、代码和避坑经验全部写进去了。你直接复制保存即可。
+
+---
+
+# 📚 GitHub 同步 Gitee 终极操作手册
+
+## 🎯 核心目标
+将 GitHub 上的开源学习仓库（Fork 到自己的账号）自动或手动同步到自己的 Gitee 私有仓库中，作为个人学习词库和异地备份。
+**原则**：纯手动触发、防覆盖保护、使用 SSH 确保稳定推送。
+
+---
+
+## 🛠️ 第一阶段：前置准备（只做一次）
+
+### 1. Gitee 生成私人令牌（Token）
+*   登录 Gitee，点右上角头像 -> **设置** -> 左侧 **安全设置** -> **私人令牌**。
+*   点“生成新令牌”，名称随意（如 `github-sync`）。
+*   **权限只勾选 `projects`（查看、创建、更新你的项目）**，其他一律不勾。
+*   提交后，**复制这串令牌**（只显示一次，务必存好）。
+
+### 2. 生成 SSH 密钥对（本地电脑操作）
+*   打开电脑终端（Mac/Linux）或 Git Bash（Windows），执行：
+    ```bash
+    ssh-keygen -t ed25519 -C "github-actions-sync"
+    ```
+*   一路回车（不要设置密码）。会在 `~/.ssh/`（Windows 为 `C:\Users\用户名\.ssh\`）下生成两个文件：
+    *   `id_ed25519`（私钥，无后缀，**给 GitHub 用**）
+    *   `id_ed25519.pub`（公钥，**给 Gitee 用**）
+
+### 3. 在 Gitee 配置 SSH 公钥
+*   用记事本打开 `id_ed25519.pub`，**复制全部内容**。
+*   登录 Gitee -> 头像 -> **设置** -> 左侧 **安全设置** -> **SSH 公钥**。
+*   标题随意（如 `github-actions`），粘贴公钥，保存。
+
+### 4. 在 GitHub 配置 Secret
+*   进入你 Fork 的 `hub-mirror-action` 仓库（或专门的控制仓库）。
+*   点 `Settings` -> `Secrets and variables` -> `Actions`。
+*   新建 **两个** Secret：
+    1.  名称：`GITEE_TOKEN`，值：粘贴刚才 Gitee 生成的私人令牌。
+    2.  名称：`GITEE_SSH_PRIVATE_KEY`，值：打开 `id_ed25519`（无后缀私钥文件）复制全部内容并粘贴。
+
+### 5. 清理仓库中的“幽灵测试”
+*   进入你 Fork 仓库的 `.github/workflows/` 目录。
+*   **删掉除了 `sync.yml` 以外的所有其他 `.yml` 文件**（如 `flake8.yaml`、`verify-on-ubuntu-...` 等）。
+*   *原因*：这些是原作者内部测试脚本，在你的环境跑必然报错，删掉才能看清真正的同步结果。
+
+---
+
+## 📝 第二阶段：配置 `sync.yml` 文件
+
+在 `.github/workflows/` 目录下新建 `sync.yml`，将下方代码**整段复制进去**：
+
+```yaml
+name: Sync to Gitee (Manual with SSH)
+
+on:
+  # 只保留手动触发，去掉了 schedule（凌晨定时）
+  workflow_dispatch:     
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. 加载 SSH 私钥到 GitHub Actions 环境
+      - name: Setup SSH Agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.GITEE_SSH_PRIVATE_KEY }}
+
+      # 2. 将 Gitee 加入已知主机（防止首次连接确认提示报错）
+      - name: Add Gitee to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H gitee.com >> ~/.ssh/known_hosts
+
+      # 3. 检查并过滤已存在的 Gitee 仓库（尽力而为，私有库可能会撒谎）
+      - name: Check and Filter existing repos on Gitee
+        id: filter-repos
+        env:
+          # ⚠️ 这里写你要同步的仓库名（多个用英文逗号隔开，中间千万别加空格）
+          ALL_REPOS: "awesome-math"
+          GITEE_OWNER: "dddsm122"
+        run: |
+          IFS=',' read -ra REPOS <<< "$ALL_REPOS"
+          TO_SYNC=""
+          for REPO in "${REPOS[@]}"; do
+            REPO=$(echo "$REPO" | xargs)
+            
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://gitee.com/api/v5/repos/$GITEE_OWNER/$REPO?access_token=${{ secrets.GITEE_TOKEN }}")
+            
+            if [ "$HTTP_CODE" -eq 200 ]; then
+              echo "⚠️ 仓库 $REPO 在 Gitee 已存在，为了防止覆盖你的修改，自动跳过。"
+            else
+              echo "✅ 仓库 $REPO 不存在，准备同步。"
+              TO_SYNC="${TO_SYNC:+$TO_SYNC,}$REPO"
+            fi
+          done
+          
+          if [ -z "$TO_SYNC" ]; then
+            echo "sync_list=" >> $GITHUB_OUTPUT
+            echo "⏭️ 所有仓库均已存在，本次无需执行同步。"
+          else
+            echo "sync_list=$TO_SYNC" >> $GITHUB_OUTPUT
+            echo "🔄 本次准备同步的仓库：$TO_SYNC"
+          fi
+          exit 0
+
+      # 4. 执行同步
+      - name: Mirror the Github repos to Gitee
+        if: steps.filter-repos.outputs.sync_list != ''
+        uses: Yikun/hub-mirror-action@master
+        with:
+          src: github/YinGy20
+          dst: gitee/dddsm122
+          dst_key: ${{ secrets.GITEE_SSH_PRIVATE_KEY }} # SSH 私钥
+          dst_token: ${{ secrets.GITEE_TOKEN }}         # Token（用于建仓）
+          static_list: ${{ steps.filter-repos.outputs.sync_list }} 
+          force_update: true
+```
+
+---
+
+## 🚀 第三阶段：日常操作与使用
+
+1. **保存配置**：在 GitHub 网页点 `Commit changes` 保存。
+2. **手动触发**：点仓库上方的 `Actions` -> 左侧选 `Sync to Gitee (Manual with SSH)` -> 右侧点 `Run workflow` -> 绿色按钮 `Run workflow`。
+3. **去 Gitee 验货**：
+   * 打开你的 Gitee 主页，确认对应的仓库在不在，代码有没有更新。
+   * **只要 Gitee 上的代码存在且是最新的，目标就达成了！**
+
+---
+
+## ⚠️ 第四阶段：核心避坑指南（血泪总结）
+
+### 🚨 1. 配了 SSH 后，“防覆盖护身符”就失效了！
+之前没有 SSH 时，工具试图强行覆盖会报错失败。**现在配了 SSH，当 Gitee 上存在同名仓库时，工具会成功执行 `git push -f`（强制覆盖），你 Gitee 上的内容会被瞬间抹掉。**
+*   **正确操作**：想同步新仓库时，**务必先去 Gitee 删除同名仓库**，然后再点手动运行。
+
+### 🛡️ 2. 不要配 SSH 密钥（如果不想被覆盖）
+如果在未来你发现 Gitee 上的内容被意外覆盖了，请立即**删除 GitHub Secret 中的 `GITEE_SSH_PRIVATE_KEY`**，并移除 YAML 里 SSH 相关的步骤。这样它就会因为缺少 SSH 密钥而报错失败，反而保护了你的 Gitee 代码。
+
+### 🔒 3. 仓库保持私有
+*   Fork 别人的仓库并同步到 Gitee，建议保持**私有**。除非原仓库有明确的开源许可证（如 MIT），否则公开可能有侵权风险。
+*   私有仓库更安全，你可以往里面写任何学习笔记，不用担心被别人看到。
+
+### 🛑 4. 绝对不要在 Gitee 网页上手动改代码
+Gitee 只是个“只读网盘”。一旦你手动在 Gitee 网页端修改了代码，下次同步时就会被强制覆盖抹掉。**所有的代码修改都在 GitHub 端进行。**
+
+### 🧹 5. 以后怎么加新仓库？
+打开 `sync.yml`，把 `ALL_REPOS: "awesome-math"` 改成：
+```yaml
+ALL_REPOS: "awesome-math,新仓库名1,新仓库名2"
+```
+用英文逗号隔开，然后提交，去 Actions 点一下按钮。如果里面某个仓库名在 Gitee 上已经存在，脚本会自动跳过它，同步新加入的仓库。
+
+### 🔑 6. 私钥丢失怎么办？
+如果本地私钥丢失，或者 GitHub Secret 被误删：
+1. 去 Gitee 删除旧的 SSH 公钥。
+2. 在本地重新执行 `ssh-keygen -t ed25519 -C "new_key"`。
+3. 把新的公钥贴到 Gitee，把新的私钥贴到 GitHub Secret。
+
+### 💡 7. 关于红叉（❌）的心态
+如果某次运行爆红，不要慌，先去看 Gitee 上的仓库代码在不在。**只要 Gitee 上的代码在，哪怕 GitHub 报红叉，你的同步目的也已经达到了。** 去 Gitee 确认结果，比看 GitHub 的报错更重要。
+
+---
+
+**🌟 总结一句话**：
+Gitee 上没建过这个仓库 -> 随便点，秒推成功（绿勾）。
+Gitee 上建过这个仓库 -> 先去删旧仓库再点，或者等它自动跳过。
+不要手动去 Gitee 改代码。保持私有。去享受你的私人学习库吧！
