@@ -40,7 +40,6 @@ jobs:
             echo "sync_list=$TO_SYNC" >> $GITHUB_OUTPUT
             echo "🔄 本次准备同步的仓库：$TO_SYNC"
           fi
-
           exit 0
 
       - name: Mirror the Github repos to Gitee
