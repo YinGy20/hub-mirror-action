@@ -23,7 +23,8 @@ jobs:
             REPO=$(echo "$REPO" | xargs)
             
             # 请求 Gitee API 检查仓库是否存在
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://gitee.com/api/v5/repos/$GITEE_OWNER/$REPO")
+            # 👇 这里加上 ?access_token=$GITEE_TOKEN，让 API 认识你
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://gitee.com/api/v5/repos/$GITEE_OWNER/$REPO?access_token=$GITEE_TOKEN")
             
             if [ "$HTTP_CODE" -eq 200 ]; then
               echo "⚠️ 仓库 $REPO 在 Gitee 已存在，为了防止覆盖你的修改，自动跳过。"
