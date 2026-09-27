@@ -20,8 +20,6 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -H gitee.com >> ~/.ssh/known_hosts
 
-      
-
       - name: Mirror the Github repos to Gitee
         uses: Yikun/hub-mirror-action@master
         with:
