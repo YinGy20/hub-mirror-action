@@ -1,30 +1,39 @@
-name: Sync to Gitee (Safe Mode)
+name: Sync to Gitee (Manual with SSH)
 
 on:
-  schedule:
-    - cron: '0 0 * * *' # 每天凌晨 0 点自动推送（可根据需要修改时间）
-  workflow_dispatch:     # 允许你在网页上手动点击按钮触发
+  # 只保留手动触发，去掉了 schedule（凌晨定时）
+  workflow_dispatch:     
 
 jobs:
   mirror:
     runs-on: ubuntu-latest
     steps:
+      # 1. 加载 SSH 私钥到 GitHub Actions 环境
+      - name: Setup SSH Agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.GITEE_SSH_PRIVATE_KEY }}
+
+      # 2. 将 Gitee 加入已知主机（防止首次连接确认提示报错）
+      - name: Add Gitee to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H gitee.com >> ~/.ssh/known_hosts
+
+      # 3. 检查并过滤已存在的 Gitee 仓库（尽力而为，私有库可能会撒谎）
       - name: Check and Filter existing repos on Gitee
         id: filter-repos
         env:
-          # ⚠️ 在这里填写你想同步的仓库名（多个用英文逗号隔开，不要有空格）
+          # ⚠️ 这里写你要同步的仓库名（多个用英文逗号隔开，中间千万别加空格）
           ALL_REPOS: "KataGo"
           GITEE_OWNER: "dddsm122"
         run: |
           IFS=',' read -ra REPOS <<< "$ALL_REPOS"
           TO_SYNC=""
           for REPO in "${REPOS[@]}"; do
-            # 去除可能存在的空格
             REPO=$(echo "$REPO" | xargs)
             
-            # 请求 Gitee API 检查仓库是否存在
-            # 👇 这里加上 ?access_token=$GITEE_TOKEN，让 API 认识你
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://gitee.com/api/v5/repos/$GITEE_OWNER/$REPO?access_token=$GITEE_TOKEN")
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://gitee.com/api/v5/repos/$GITEE_OWNER/$REPO?access_token=${{ secrets.GITEE_TOKEN }}")
             
             if [ "$HTTP_CODE" -eq 200 ]; then
               echo "⚠️ 仓库 $REPO 在 Gitee 已存在，为了防止覆盖你的修改，自动跳过。"
@@ -43,13 +52,14 @@ jobs:
           fi
           exit 0
 
+      # 4. 执行同步
       - name: Mirror the Github repos to Gitee
         if: steps.filter-repos.outputs.sync_list != ''
         uses: Yikun/hub-mirror-action@master
         with:
           src: github/YinGy20
           dst: gitee/dddsm122
-          dst_token: ${{ secrets.GITEE_TOKEN }}
-          # 这里动态读取刚刚过滤好的安全列表
+          dst_key: ${{ secrets.GITEE_SSH_PRIVATE_KEY }} # 加上 SSH 私钥，防止认证失败
+          dst_token: ${{ secrets.GITEE_TOKEN }}         # 依然保留 Token（用于建仓）
           static_list: ${{ steps.filter-repos.outputs.sync_list }} 
           force_update: true
