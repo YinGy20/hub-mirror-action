@@ -13,7 +13,7 @@ jobs:
         id: filter-repos
         env:
           # ⚠️ 在这里填写你想同步的仓库名（多个用英文逗号隔开，不要有空格）
-          ALL_REPOS: "repo1,repo2"
+          ALL_REPOS: "awesome-math"
           GITEE_OWNER: "dddsm122"
         run: |
           IFS=',' read -ra REPOS <<< "$ALL_REPOS"
