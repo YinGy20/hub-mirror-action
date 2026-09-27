@@ -41,6 +41,8 @@ jobs:
             echo "🔄 本次准备同步的仓库：$TO_SYNC"
           fi
 
+          exit 0
+
       - name: Mirror the Github repos to Gitee
         if: steps.filter-repos.outputs.sync_list != ''
         uses: Yikun/hub-mirror-action@master
